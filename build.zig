@@ -12,39 +12,40 @@ pub fn build(b: *std.build.Builder) void {
 
     zstd.linkLibC();
 
-    const zstd_root = "third_party/zstd-dev/lib/";
-
     zstd.addCSourceFiles(&.{
-        zstd_root ++ "/common/debug.c",
-        zstd_root ++ "/common/entropy_common.c",
-        zstd_root ++ "/common/error_private.c",
-        zstd_root ++ "/common/fse_decompress.c",
-        zstd_root ++ "/common/pool.c",
-        zstd_root ++ "/common/threading.c",
-        zstd_root ++ "/common/xxhash.c",
-        zstd_root ++ "/common/zstd_common.c",
+        "./lib/common/debug.c",
+        "./lib/common/entropy_common.c",
+        "./lib/common/error_private.c",
+        "./lib/common/fse_decompress.c",
+        "./lib/common/pool.c",
+        "./lib/common/threading.c",
+        "./lib/common/xxhash.c",
+        "./lib/common/zstd_common.c",
 
-        zstd_root ++ "/compress/fse_compress.c",
-        zstd_root ++ "/compress/hist.c",
-        zstd_root ++ "/compress/huf_compress.c",
-        zstd_root ++ "/compress/zstd_compress.c",
-        zstd_root ++ "/compress/zstd_compress_literals.c",
-        zstd_root ++ "/compress/zstd_compress_sequences.c",
-        zstd_root ++ "/compress/zstd_compress_superblock.c",
-        zstd_root ++ "/compress/zstd_double_fast.c",
-        zstd_root ++ "/compress/zstd_fast.c",
-        zstd_root ++ "/compress/zstd_lazy.c",
-        zstd_root ++ "/compress/zstd_ldm.c",
-        zstd_root ++ "/compress/zstd_opt.c",
-        zstd_root ++ "/compress/zstdmt_compress.c",
+        "./lib/compress/fse_compress.c",
+        "./lib/compress/hist.c",
+        "./lib/compress/huf_compress.c",
+        "./lib/compress/zstd_compress.c",
+        "./lib/compress/zstd_compress_literals.c",
+        "./lib/compress/zstd_compress_sequences.c",
+        "./lib/compress/zstd_compress_superblock.c",
+        "./lib/compress/zstd_double_fast.c",
+        "./lib/compress/zstd_fast.c",
+        "./lib/compress/zstd_lazy.c",
+        "./lib/compress/zstd_ldm.c",
+        "./lib/compress/zstd_opt.c",
+        "./lib/compress/zstdmt_compress.c",
 
-        zstd_root ++ "/decompress/huf_decompress.c",
-        zstd_root ++ "/decompress/zstd_ddict.c",
-        zstd_root ++ "/decompress/zstd_decompress.c",
-        zstd_root ++ "/decompress/zstd_decompress_block.c",
+        "./lib/decompress/huf_decompress.c",
+        "./lib/decompress/zstd_ddict.c",
+        "./lib/decompress/zstd_decompress.c",
+        "./lib/decompress/zstd_decompress_block.c",
 
-        zstd_root ++ "/decompress/huf_decompress_amd64.S",
+        "./lib/decompress/huf_decompress_amd64.S",
     }, &.{});
 
-    zstd.addIncludePath(.{ .path = zstd_root });
+    zstd.addIncludePath(.{ .path = "./lib" });
+
+    b.installArtifact(zstd);
+    zstd.installHeadersDirectory("./lib", "zstd");
 }
