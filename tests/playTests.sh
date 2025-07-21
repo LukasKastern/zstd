@@ -1,7 +1,7 @@
 #!/bin/sh
 
 set -e # exit immediately on error
-# set -x # print commands before execution (debug)
+set -x # print commands before execution (debug)
 
 unset ZSTD_CLEVEL
 unset ZSTD_NBTHREADS
@@ -16,13 +16,7 @@ datagen() {
     "$DATAGEN_BIN" "$@"
 }
 
-zstd() {
-    if [ -z "$EXE_PREFIX" ]; then
-        "$ZSTD_BIN" "$@"
-    else
-        "$EXE_PREFIX" "$ZSTD_BIN" "$@"
-    fi
-}
+alias zstd='$EXE_PREFIX $ZSTD_BIN'
 
 sudoZstd() {
     if [ -z "$EXE_PREFIX" ]; then
@@ -49,7 +43,7 @@ roundTripTest() {
     rm -f tmp1 tmp2
     println "roundTripTest: datagen $1 $proba | zstd -v$cLevel | zstd -d$dLevel"
     datagen $1 $proba | $MD5SUM > tmp1
-    datagen $1 $proba | zstd --ultra -v$cLevel | zstd -d$dLevel  | $MD5SUM > tmp2
+    datagen $1 $proba | zstd -T0 --ultra -v$cLevel | zstd -d$dLevel  | $MD5SUM > tmp2
     $DIFF -q tmp1 tmp2
 }
 
@@ -71,7 +65,7 @@ fileRoundTripTest() {
     println "fileRoundTripTest: datagen $1 $local_p > tmp && zstd -v$local_c -c tmp | zstd -d$local_d"
     datagen $1 $local_p > tmp
     < tmp $MD5SUM > tmp.md5.1
-    zstd --ultra -v$local_c -c tmp | zstd -d$local_d | $MD5SUM > tmp.md5.2
+    zstd -T0 --ultra -v$local_c -c tmp | zstd -d$local_d | $MD5SUM > tmp.md5.2
     $DIFF -q tmp.md5.1 tmp.md5.2
 }
 
@@ -109,10 +103,7 @@ isTerminal=${isTerminal:-$detectedTerminal}
 
 isWindows=false
 INTOVOID="/dev/null"
-case "$UNAME" in
-  GNU) DEVDEVICE="/dev/random" ;;
-  *) DEVDEVICE="/dev/zero" ;;
-esac
+DEVDEVICE="/dev/zero"
 case "$OS" in
   Windows*)
     isWindows=true
@@ -123,7 +114,6 @@ esac
 
 case "$UNAME" in
   Darwin) MD5SUM="md5 -r" ;;
-  FreeBSD) MD5SUM="gmd5sum" ;;
   NetBSD) MD5SUM="md5 -n" ;;
   OpenBSD) MD5SUM="md5" ;;
   *) MD5SUM="md5sum" ;;
@@ -234,12 +224,23 @@ unset ZSTD_CLEVEL
 println "test : compress to stdout"
 zstd tmp -c > tmpCompressed
 zstd tmp --stdout > tmpCompressed       # long command format
-println "test : compress to named file"
+
+println "test : compress to named file (-o)"
 rm -f tmpCompressed
 zstd tmp -o tmpCompressed
 test -f tmpCompressed   # file must be created
+
 println "test : force write, correct order"
 zstd tmp -fo tmpCompressed
+
+println "test : -c + -o : last one wins"
+rm -f tmpOut
+zstd tmp -c > tmpCompressed -o tmpOut
+test -f tmpOut   # file must be created
+rm -f tmpCompressed
+zstd tmp -o tmpOut -c > tmpCompressed
+test -f tmpCompressed   # file must be created
+
 println "test : forgotten argument"
 cp tmp tmp2
 zstd tmp2 -fo && die "-o must be followed by filename "
@@ -326,6 +327,51 @@ if [ "$isWindows" = false ] && [ "$UNAME" != "AIX" ]; then
   fi
 fi
 
+println "\n===>  multiple_thread test "
+
+datagen > tmp
+println "test : single-thread "
+zstd --fast --single-thread tmp -o tmpMT0
+println "test : one worker thread (default)"
+zstd --fast -T1 tmp -o tmpMT1
+println "test : two worker threads "
+zstd --fast -T2 tmp -o tmpMT2
+println "test : 16-thread "
+zstd --fast -T16 tmp -o tmpMT3
+println "test : 127-thread "
+zstd --fast -T127 tmp -o tmpMT4
+println "test : 128-thread "
+zstd --fast -T128 tmp -o tmpMT5
+println "test : max allowed numeric value is 4294967295 "
+zstd --fast -4294967295 tmp -o tmpMT6
+println "test : numeric value overflows 32-bit unsigned int "
+zstd --fast -4294967296 tmp -o tmptest9 && die "max allowed numeric value is 4294967295"
+
+datagen > tmp
+println "test : basic compression "
+zstd -f tmp  # trivial compression case, creates tmp.zst
+println "test : basic decompression"
+zstd -d -f -T1 tmp.zst
+println "note : decompression does not support -T mode, but execution support"
+rm -rf tmpMT*
+
+println "\n===>  --fast_argument test "
+datagen > tmp
+println "test : basic compression "
+zstd -f tmp  # trivial compression case, creates tmp.zst
+println "test: --fast=1"
+zstd --fast=1 -f tmp
+println "test: --fast=99"
+zstd --fast=99 -f tmp
+println "test: Invalid value -- negative number"
+zstd --fast=-1 -f tmp && die "error: Invalid value -- negative number"
+println "test: Invalid value -- zero"
+zstd --fast=0 -f tmp && die "error: Invalid value -- 0 number"
+println "test: max allowed numeric argument of --fast is 4294967295"
+zstd --fast=4294967295 -f tmp
+println "test: numeric value overflows 32-bit unsigned int "
+zstd --fast=4294967296 -f tmp && die "max allowed argument of --fast is 4294967295"
+
 println "\n===>  --exclude-compressed flag"
 rm -rf precompressedFilterTestDir
 mkdir -p precompressedFilterTestDir
@@ -354,6 +400,19 @@ zstd --long --rm -r precompressedFilterTestDir
 # Files should get compressed again without the --exclude-compressed flag.
 test -f precompressedFilterTestDir/input.5.zst.zst
 test -f precompressedFilterTestDir/input.6.zst.zst
+
+# Test some other compressed file extensions
+datagen $size > precompressedFilterTestDir/input.flac
+datagen $size > precompressedFilterTestDir/input.mov
+datagen $size > precompressedFilterTestDir/input.mp3
+zstd --exclude-compressed --long --rm -r precompressedFilterTestDir
+test ! -f precompressedFilterTestDir/input.flac.zst
+test ! -f precompressedFilterTestDir/input.mov.zst
+test ! -f precompressedFilterTestDir/input.mp3.zst
+zstd --long --rm -r precompressedFilterTestDir
+test -f precompressedFilterTestDir/input.flac.zst
+test -f precompressedFilterTestDir/input.mov.zst
+test -f precompressedFilterTestDir/input.mp3.zst
 rm -rf precompressedFilterTestDir
 println "Test completed"
 
@@ -394,6 +453,8 @@ println "test: --rm is disabled when output is stdout"
 test -f tmp
 zstd --rm tmp -c > $INTOVOID
 test -f tmp # tmp shall still be there
+zstd --rm tmp --stdout > $INTOVOID
+test -f tmp # tmp shall still be there
 zstd -f --rm tmp -c > $INTOVOID
 test -f tmp # tmp shall still be there
 zstd -f tmp -c > $INTOVOID --rm
@@ -411,7 +472,22 @@ zstd -f tmp tmp2 -o tmp3.zst --rm # just warns, no prompt
 test -f tmp
 test -f tmp2
 zstd -q tmp tmp2 -o tmp3.zst --rm && die "should refuse to concatenate"
-
+println "test: --rm is active with -o when single input"
+rm -f tmp2.zst
+zstd --rm tmp2 -o tmp2.zst
+test -f tmp2.zst
+test ! -f tmp2
+println "test: -c followed by -o => -o wins, so --rm remains active" # (#3719)
+rm tmp2.zst
+cp tmp tmp2
+zstd --rm tmp2 -c > $INTOVOID -o tmp2.zst
+test ! -f tmp2
+println "test: -o followed by -c => -c wins, so --rm is disabled" # (#3719)
+rm tmp3.zst
+cp tmp tmp2
+zstd -v --rm tmp2 -o tmp2.zst -c > tmp3.zst
+test -f tmp2
+test -f tmp3.zst
 println "test : should quietly not remove non-regular file"
 println hello > tmp
 zstd tmp -f -o "$DEVDEVICE" 2>tmplog > "$INTOVOID"
@@ -772,6 +848,7 @@ ls tmp* > tmpList
 zstd -f tmp1 --filelist=tmpList --filelist=tmpList tmp2 tmp3  # can trigger an overflow of internal file list
 rm -rf tmp*
 
+
 println "\n===> --[no-]content-size tests"
 
 datagen > tmp_contentsize
@@ -1011,8 +1088,8 @@ println "\n===>  dictionary tests "
 println "- Test high/low compressibility corpus training"
 datagen -g12M -P90 > tmpCorpusHighCompress
 datagen -g12M -P5 > tmpCorpusLowCompress
-zstd --train -B2K tmpCorpusHighCompress -o tmpDictHighCompress
-zstd --train -B2K tmpCorpusLowCompress -o tmpDictLowCompress
+zstd --train --split=2K tmpCorpusHighCompress -o tmpDictHighCompress
+zstd --train --split=2K tmpCorpusLowCompress -o tmpDictLowCompress
 rm -f tmpCorpusHighCompress tmpCorpusLowCompress tmpDictHighCompress tmpDictLowCompress
 println "- Test with raw dict (content only) "
 datagen > tmpDict
@@ -1097,8 +1174,8 @@ rm -f tmp* dictionary
 
 println "- Test --memory for dictionary compression"
 datagen -g12M -P90 > tmpCorpusHighCompress
-zstd --train -B2K tmpCorpusHighCompress -o tmpDictHighCompress --memory=10K && die "Dictionary training should fail : --memory too low (10K)"
-zstd --train -B2K tmpCorpusHighCompress -o tmpDictHighCompress --memory=5MB 2> zstTrainWithMemLimitStdErr
+zstd --train --split=2K tmpCorpusHighCompress -o tmpDictHighCompress --memory=10K && die "Dictionary training should fail : --memory too low (10K)"
+zstd --train --split=2K tmpCorpusHighCompress -o tmpDictHighCompress --memory=5MB 2> zstTrainWithMemLimitStdErr
 cat zstTrainWithMemLimitStdErr | $GREP "setting manual memory limit for dictionary training data at 5 MB"
 cat zstTrainWithMemLimitStdErr | $GREP "Training samples set too large (12 MB); training on 5 MB only..."
 rm zstTrainWithMemLimitStdErr
@@ -1472,9 +1549,8 @@ then
     roundTripTest -g4M "1 -T0 --auto-threads=physical"
     roundTripTest -g4M "1 -T0 --auto-threads=logical"
     roundTripTest -g8M "3 -T2"
-    roundTripTest -g8M "19 --long"
     roundTripTest -g8000K "2 --threads=2"
-    fileRoundTripTest -g4M "19 -T2 -B1M"
+    fileRoundTripTest -g4M "19 -T2 --split=1M"
 
     println "\n===>  zstdmt long distance matching round-trip tests "
     roundTripTest -g8M "3 --long=24 -T2"
@@ -1482,14 +1558,16 @@ then
     println "\n===>  zstdmt environment variable tests "
     echo "multifoo" >> mt_tmp
     ZSTD_NBTHREADS=-3 zstd -f mt_tmp # negative value, warn and revert to default setting
-    ZSTD_NBTHREADS=''  zstd -f mt_tmp # empty env var, warn and revert to default setting
-    ZSTD_NBTHREADS=-   zstd -f mt_tmp # malformed env var, warn and revert to default setting
-    ZSTD_NBTHREADS=a   zstd -f mt_tmp # malformed env var, warn and revert to default setting
-    ZSTD_NBTHREADS=+a  zstd -f mt_tmp # malformed env var, warn and revert to default setting
+    ZSTD_NBTHREADS='' zstd -f mt_tmp # empty env var, warn and revert to default setting
+    ZSTD_NBTHREADS=-  zstd -f mt_tmp # malformed env var, warn and revert to default setting
+    ZSTD_NBTHREADS=a  zstd -f mt_tmp # malformed env var, warn and revert to default setting
+    ZSTD_NBTHREADS=+a zstd -f mt_tmp # malformed env var, warn and revert to default setting
     ZSTD_NBTHREADS=3a7 zstd -f mt_tmp # malformed env var, warn and revert to default setting
     ZSTD_NBTHREADS=50000000000 zstd -f mt_tmp # numeric value too large, warn and revert to default setting=
     ZSTD_NBTHREADS=2  zstd -f mt_tmp # correct usage
-    ZSTD_NBTHREADS=1  zstd -f mt_tmp # correct usage: single thread
+    ZSTD_NBTHREADS=1  zstd -f mt_tmp # correct usage: single worker
+    ZSTD_NBTHREADS=4  zstd -f mt_tmp -vv 2>&1 | $GREP "4 worker threads" # check message
+    ZSTD_NBTHREADS=0  zstd -f mt_tmp -vv 2>&1 | $GREP "core(s) detected" # check core count autodetection is triggered
     # temporary envvar changes in the above tests would actually persist in macos /bin/sh
     unset ZSTD_NBTHREADS
     rm -f mt_tmp*
@@ -1689,7 +1767,7 @@ then
 
     println "\n===>   rsyncable mode "
     roundTripTest -g10M " --rsyncable"
-    roundTripTest -g10M " --rsyncable -B100K"
+    roundTripTest -g10M " --rsyncable --split=100K"
     println "===>   test: --rsyncable must fail with --single-thread"
     zstd -f -vv --rsyncable --single-thread tmp && die "--rsyncable must fail with --single-thread"
 fi
@@ -1700,10 +1778,14 @@ datagen -g1000 -P10 > tmp_patch
 zstd --patch-from=tmp_dict tmp_patch -o tmp_patch_diff
 zstd -d --patch-from=tmp_dict tmp_patch_diff -o tmp_patch_recon
 $DIFF -s tmp_patch_recon tmp_patch
+zstd -f --patch-apply=tmp_dict tmp_patch_diff -o tmp_patch_recon
+$DIFF -s tmp_patch_recon tmp_patch
 
 println "\n===> alternate syntax: patch-from origin"
 zstd -f --patch-from tmp_dict tmp_patch -o tmp_patch_diff
 zstd -df --patch-from tmp_dict tmp_patch_diff -o tmp_patch_recon
+$DIFF -s tmp_patch_recon tmp_patch
+zstd -f --patch-apply tmp_dict tmp_patch_diff -o tmp_patch_recon
 $DIFF -s tmp_patch_recon tmp_patch
 rm -rf tmp_*
 
@@ -1768,6 +1850,8 @@ roundTripTest -g18000017 -P88 17
 roundTripTest -g18000018 -P94 18
 roundTripTest -g18000019 -P96 19
 
+roundTripTest -g8M "19 --long"
+
 roundTripTest -g5000000000 -P99 "1 --zstd=wlog=25"
 roundTripTest -g3700000000 -P0 "1 --zstd=strategy=6,wlog=25"   # ensure btlazy2 can survive an overflow rescale
 
@@ -1806,36 +1890,36 @@ println "\n===>  cover dictionary builder : advanced options "
 TESTFILE="$PRGDIR"/zstdcli.c
 datagen > tmpDict
 println "- Create first dictionary"
-zstd --train-cover=k=46,d=8,split=80 "$TESTDIR"/*.c "$PRGDIR"/*.c -o tmpDict
+zstd -T0 --train-cover=k=46,d=8,split=80 "$TESTDIR"/*.c "$PRGDIR"/*.c -o tmpDict
 cp "$TESTFILE" tmp
 zstd -f tmp -D tmpDict
 zstd -f tmp -D tmpDict --patch-from=tmpDict && die "error: can't use -D and --patch-from=#at the same time"
 zstd -d tmp.zst -D tmpDict -fo result
 $DIFF "$TESTFILE" result
-zstd --train-cover=k=56,d=8 && die "Create dictionary without input file (should error)"
+zstd -T0 --train-cover=k=56,d=8 && die "Create dictionary without input file (should error)"
 println "- Create second (different) dictionary"
-zstd --train-cover=k=56,d=8 "$TESTDIR"/*.c "$PRGDIR"/*.c "$PRGDIR"/*.h -o tmpDictC
+zstd -T0 --train-cover=k=56,d=8 "$TESTDIR"/*.c "$PRGDIR"/*.c "$PRGDIR"/*.h -o tmpDictC
 zstd -d tmp.zst -D tmpDictC -fo result && die "wrong dictionary not detected!"
 println "- Create dictionary using shrink-dict flag"
-zstd --train-cover=steps=256,shrink "$TESTDIR"/*.c "$PRGDIR"/*.c --dictID=1 -o tmpShrinkDict
-zstd --train-cover=steps=256,shrink=1 "$TESTDIR"/*.c "$PRGDIR"/*.c --dictID=1 -o tmpShrinkDict1
-zstd --train-cover=steps=256,shrink=5 "$TESTDIR"/*.c "$PRGDIR"/*.c --dictID=1 -o tmpShrinkDict2
-zstd --train-cover=shrink=5,steps=256 "$TESTDIR"/*.c "$PRGDIR"/*.c --dictID=1 -o tmpShrinkDict3
+zstd -T0 --train-cover=steps=256,shrink "$TESTDIR"/*.c "$PRGDIR"/*.c --dictID=1 -o tmpShrinkDict
+zstd -T0 --train-cover=steps=256,shrink=1 "$TESTDIR"/*.c "$PRGDIR"/*.c --dictID=1 -o tmpShrinkDict1
+zstd -T0 --train-cover=steps=256,shrink=5 "$TESTDIR"/*.c "$PRGDIR"/*.c --dictID=1 -o tmpShrinkDict2
+zstd -T0 --train-cover=shrink=5,steps=256 "$TESTDIR"/*.c "$PRGDIR"/*.c --dictID=1 -o tmpShrinkDict3
 println "- Create dictionary with short dictID"
-zstd --train-cover=k=46,d=8,split=80 "$TESTDIR"/*.c "$PRGDIR"/*.c --dictID=1 -o tmpDict1
+zstd -T0 --train-cover=k=46,d=8,split=80 "$TESTDIR"/*.c "$PRGDIR"/*.c --dictID=1 -o tmpDict1
 cmp tmpDict tmpDict1 && die "dictionaries should have different ID !"
 println "- Create dictionary with size limit"
-zstd --train-cover=steps=8 "$TESTDIR"/*.c "$PRGDIR"/*.c -o tmpDict2 --maxdict=4K
+zstd -T0 --train-cover=steps=8 "$TESTDIR"/*.c "$PRGDIR"/*.c -o tmpDict2 --maxdict=4K
 println "- Compare size of dictionary from 90% training samples with 80% training samples"
-zstd --train-cover=split=90 -r "$TESTDIR"/*.c "$PRGDIR"/*.c
-zstd --train-cover=split=80 -r "$TESTDIR"/*.c "$PRGDIR"/*.c
+zstd -T0 --train-cover=split=90 -r "$TESTDIR"/*.c "$PRGDIR"/*.c
+zstd -T0 --train-cover=split=80 -r "$TESTDIR"/*.c "$PRGDIR"/*.c
 println "- Create dictionary using all samples for both training and testing"
-zstd --train-cover=split=100 -r "$TESTDIR"/*.c "$PRGDIR"/*.c
+zstd -T0 --train-cover=split=100 -r "$TESTDIR"/*.c "$PRGDIR"/*.c
 println "- Test -o before --train-cover"
 rm -f tmpDict dictionary
 zstd -o tmpDict --train-cover "$TESTDIR"/*.c "$PRGDIR"/*.c
 test -f tmpDict
-zstd --train-cover "$TESTDIR"/*.c "$PRGDIR"/*.c
+zstd -T0 --train-cover "$TESTDIR"/*.c "$PRGDIR"/*.c
 test -f dictionary
 rm -f tmp* dictionary
 

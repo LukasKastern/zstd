@@ -739,6 +739,8 @@ static int benchMem(slice_collection_t dstBlocks, slice_collection_t srcBlocks,
     /* BMK_benchTimedFn may not run exactly nbRounds iterations */
     double speedAggregated =
         aggregateData(speedPerRound, roundNb + 1, metricAggregatePref);
+    free(speedPerRound);
+    
     if (metricAggregatePref == fastest)
       DISPLAY("Fastest Speed : %.1f MB/s \n", speedAggregated);
     else
@@ -1025,7 +1027,7 @@ int main (int argc, const char** argv)
     unsigned nbBlocks = 0; /* determine nbBlocks automatically, from source and blockSize */
     ZSTD_dictContentType_e dictContentType = ZSTD_dct_auto;
     ZSTD_dictAttachPref_e dictAttachPref = ZSTD_dictDefaultAttach;
-    ZSTD_paramSwitch_e prefetchCDictTables = ZSTD_ps_auto;
+    ZSTD_ParamSwitch_e prefetchCDictTables = ZSTD_ps_auto;
     metricAggregatePref_e metricAggregatePref = fastest;
 
     for (int argNb = 1; argNb < argc ; argNb++) {
