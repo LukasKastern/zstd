@@ -1,0 +1,7 @@
+.{
+    .name = .zstd,
+    .paths = .{""},
+    .version = "0.1.0",
+    .fingerprint = 0x72fd505e54899186,
+    .dependencies = .{},
+}
