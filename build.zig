@@ -4,15 +4,18 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const zstd = b.addStaticLibrary(.{
+    const zstd = b.addLibrary(.{
+        .linkage = .static,
         .name = "zstd",
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
-    zstd.linkLibC();
+    zstd.root_module.link_libc = true;
 
-    zstd.addCSourceFiles(.{
+    zstd.root_module.addCSourceFiles(.{
         .files = &.{
             "./lib/common/debug.c",
             "./lib/common/entropy_common.c",
@@ -46,7 +49,7 @@ pub fn build(b: *std.Build) void {
         },
         .flags = &.{},
     });
-    zstd.addIncludePath(b.path("./lib"));
+    zstd.root_module.addIncludePath(b.path("./lib"));
 
     b.installArtifact(zstd);
     zstd.installHeadersDirectory(b.path("./lib"), "zstd", .{});
